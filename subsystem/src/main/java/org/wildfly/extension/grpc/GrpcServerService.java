@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -46,12 +47,16 @@ import org.jboss.msc.service.ServiceTarget;
 import org.jboss.msc.service.StartContext;
 import org.jboss.msc.service.StartException;
 import org.jboss.msc.service.StopContext;
+import org.wildfly.common.cpu.ProcessorInfo;
 import org.wildfly.extension.grpc._private.GrpcLogger;
 
 import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.NettyServerBuilder;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
@@ -295,13 +300,24 @@ public class GrpcServerService implements Service {
                     } else {
                         trustManager = null;
                     }
+
+                    final Supplier<ExecutorService> workerThreadPool;
+                    if (css.hasCapability("org.wildfly.ee.concurrent.executor.default")) {
+                        final ServiceName executorName = css.getCapabilityServiceName("org.wildfly.ee.concurrent.executor",
+                                "default");
+                        workerThreadPool = serviceBuilder.requires(executorName);
+                    } else {
+                        // TODO we need to create an ExecutorService which will wrap threads
+                        workerThreadPool = Executors::newCachedThreadPool;
+                    }
+
                     // stop running service
                     if (grpcServerService != null) {
                         grpcServerService.stopServer();
                     }
                     // install service
                     grpcServerService = new GrpcServerService(deploymentUnit.getName(), serviceConsumer, executorSupplier,
-                            serviceClasses, classLoader);
+                            workerThreadPool, serviceClasses, classLoader);
                     serviceBuilder.setInstance(grpcServerService);
                     serviceBuilder.install();
                     return;
@@ -314,14 +330,17 @@ public class GrpcServerService implements Service {
     private final String name;
     private final Consumer<GrpcServerService> serverService;
     private final Supplier<ExecutorService> executorService;
+    private final Supplier<ExecutorService> workerThreadPool;
     private final Set<String> serviceClasses = new HashSet<String>();
     private final Set<BindableService> services = new HashSet<BindableService>();
     private Server server;
 
     private GrpcServerService(String name, Consumer<GrpcServerService> serverService, Supplier<ExecutorService> executorService,
+            Supplier<ExecutorService> workerThreadPool,
             Map<String, String> serviceClasses, ClassLoader classLoader) throws Exception {
         this.name = name;
         this.serverService = serverService;
+        this.workerThreadPool = workerThreadPool;
         this.executorService = executorService;
         for (String serviceClass : serviceClasses.values()) {
             newService(serviceClass, classLoader, this.serviceClasses, services);
@@ -353,6 +372,13 @@ public class GrpcServerService implements Service {
         GrpcLogger.LOGGER.serverListening(name, SERVER_HOST, SERVER_PORT);
         SocketAddress socketAddress = new InetSocketAddress(SERVER_HOST, SERVER_PORT);
         NettyServerBuilder serverBuilder = NettyServerBuilder.forAddress(socketAddress);
+
+        // Configure an EventLoopGroup for wrapping
+        final EventLoopGroup eventLoopGroup = new NioEventLoopGroup(ProcessorInfo.availableProcessors() * 2,
+                workerThreadPool.get());
+        serverBuilder.bossEventLoopGroup(eventLoopGroup)
+                .channelType(NioServerSocketChannel.class)
+                .workerEventLoopGroup(eventLoopGroup);
 
         for (SERVER_ATTRIBUTE attr : serverUpdates) {
             switch (attr) {
