@@ -1,0 +1,4 @@
+wildfly-configuration:
+  subsystem:
+    grpc:
+      key-manager-name: ""

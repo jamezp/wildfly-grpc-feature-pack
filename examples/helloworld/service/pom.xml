@@ -122,6 +122,31 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <configuration>
+                            <target>
+                                <copy todir="${wildfly.home}/standalone/configuration" failonerror="true"
+                                    overwrite="true" file="${root.directory}/ssl/server.keystore.jks" />
+                                <copy todir="${wildfly.home}/standalone/configuration" failonerror="true"
+                                    overwrite="true" file="${root.directory}/ssl/server.truststore.jks" />
+                                <mkdir
+                                    dir="${wildfly.home}/modules/system/layers/base/org/jboss/as/controller/main/dir/META-INF/services/" />
+                                <copy
+                                    todir="${wildfly.home}/modules/system/layers/base/org/jboss/as/controller/main/dir/META-INF/services/"
+                                    failonerror="true" overwrite="true"
+                                    file="${root.directory}/ssl/org.jboss.as.controller.persistence.ConfigurationExtension" />
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
     <profiles>
@@ -138,25 +163,9 @@
                     <plugin>
                         <groupId>org.wildfly.plugins</groupId>
                         <artifactId>wildfly-maven-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <goals>
-                                    <goal>execute-commands</goal>
-                                </goals>
-                                <phase>package</phase>
-                                <configuration>
-                                    <offline>true</offline>
-                                    <scripts>
-                                        <script>${root.directory}/ssl/configure-elytron.cli</script>
-                                    </scripts>
-                                    <commands>
-                                        <command>embed-server</command>
-                                        <command>/subsystem=grpc:write-attribute(name=key-manager-name, value="")</command>
-                                        <command>stop-embedded-server</command>
-                                    </commands>
-                                </configuration>
-                            </execution>
-                        </executions>
+                        <configuration>
+                            <serverArgs>-y=${root.directory}/ssl/none.yml:${root.directory}/ssl/elytron.yml</serverArgs>
+                        </configuration>
                     </plugin>
                 </plugins>
             </build>
